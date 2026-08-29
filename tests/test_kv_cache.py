@@ -1,7 +1,3 @@
-# 验证KV block 分配、追加、释放是否正确；
-# Engine 是否能跑完请求；
-# 请求结束后 KV Cache 是否释放干净
-
 import unittest
 
 from mini_serving import EngineConfig, KVBlockManager, MiniServingEngine

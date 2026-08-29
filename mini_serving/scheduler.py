@@ -11,10 +11,7 @@ class SchedulerConfig:
     max_num_seqs: int = 4
     max_prefill_tokens: int = 4096
 
-# waiting 队列：还没开始的请求
-# running 队列：正在 decode 的请求
-# finished 队列：已经完成的请求
-# failed 队列：因为 KV Cache 不够等原因失败的请求
+
 class Scheduler:
     def __init__(self, config: SchedulerConfig) -> None:
         if config.max_num_seqs <= 0:

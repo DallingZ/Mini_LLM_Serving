@@ -2,6 +2,7 @@ from dataclasses import dataclass, field
 from statistics import mean
 from typing import Dict, List
 
+from .backend import BackendTiming, DummyBackend, ServingBackend
 from .kv_cache import KVBlockManager
 from .request import Request
 from .scheduler import Scheduler, SchedulerConfig
@@ -13,11 +14,7 @@ class EngineConfig:
     max_prefill_tokens: int = 4096
     num_kv_blocks: int = 1024
     block_size: int = 16
-    prefill_base_ms: float = 0.08
-    prefill_token_ms: float = 0.006
-    decode_base_ms: float = 0.12
-    decode_seq_ms: float = 0.035
-    decode_context_ms: float = 0.0008
+    backend_timing: BackendTiming = field(default_factory=BackendTiming)
 
 
 @dataclass
@@ -80,8 +77,9 @@ class RunMetrics:
 
 
 class MiniServingEngine:
-    def __init__(self, config: EngineConfig) -> None:
+    def __init__(self, config: EngineConfig, backend: ServingBackend | None = None) -> None:
         self.config = config
+        self.backend = backend or DummyBackend(config.backend_timing)
         self.kv_cache = KVBlockManager(config.num_kv_blocks, config.block_size)
         self.scheduler = Scheduler(
             SchedulerConfig(
@@ -107,11 +105,11 @@ class MiniServingEngine:
 
     def run(self) -> RunMetrics:
         while self.scheduler.has_work():
-            self._admit_requests()
+            self._admit_requests()           # 决定哪些请求进入 Prefill
             if not self.scheduler.running:
                 self._jump_to_next_arrival()
                 continue
-            self._decode_step()
+            self._decode_step()              # Decode
 
         return RunMetrics(
             requests=list(self._requests),
@@ -127,18 +125,14 @@ class MiniServingEngine:
             return
 
         tokens = sum(req.prompt_len for req in admitted)
-        elapsed = self.config.prefill_base_ms + tokens * self.config.prefill_token_ms
+        elapsed = self.backend.prefill_latency_ms(tokens, len(admitted))
         self._now_ms += elapsed
         self._record_event("prefill", len(admitted), tokens)
 
     def _decode_step(self) -> None:
         active = list(self.scheduler.active())
         max_context = max(req.cached_tokens for req in active)
-        elapsed = (
-            self.config.decode_base_ms
-            + self.config.decode_seq_ms * len(active)
-            + self.config.decode_context_ms * max_context
-        )
+        elapsed = self.backend.decode_latency_ms(len(active), max_context)
         self._now_ms += elapsed
 
         for request in active:
@@ -151,7 +145,10 @@ class MiniServingEngine:
                 self.scheduler.complete(request)
                 continue
 
-            request.append_token(self._next_token(request), self._now_ms)
+            request.append_token(
+                self.backend.next_token(request.request_id, request.prompt_len, request.generated_tokens),
+                self._now_ms,
+            )
             if request.finished:
                 self.kv_cache.free(request.request_id)
                 self.scheduler.complete(request)
@@ -175,6 +172,3 @@ class MiniServingEngine:
                 kv_used_blocks=stats.used_blocks,
             )
         )
-
-    def _next_token(self, request: Request) -> int:
-        return (request.request_id * 997 + request.generated_tokens * 17 + request.prompt_len) % 151936

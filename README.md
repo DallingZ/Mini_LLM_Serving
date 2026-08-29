@@ -15,34 +15,3 @@ Mini_LLM_Serving/
 ├── demo.py             # 小规模运行示例
 └── tests/              # 基础单元测试
 ```
-
-## 运行方式
-
-进入项目目录：
-
-```bash
-cd /home/zqb/Mini_LLM_Serving
-```
-
-运行 demo：
-
-```bash
-python3 demo.py
-```
-
-运行 benchmark：
-
-```bash
-python3 benchmark.py \
-  --num-requests 32 \
-  --prompt-len 128 \
-  --max-new-tokens 64 \
-  --max-num-seqs 8 \
-  --repeat 3
-```
-
-运行测试：
-
-```bash
-python3 -m unittest discover -s tests
-```

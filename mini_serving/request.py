@@ -1,6 +1,3 @@
-# 定义单个请求的数据结构
-# 请求从进入队列、开始运行、生成 token 到结束的状态
-
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import List, Optional
