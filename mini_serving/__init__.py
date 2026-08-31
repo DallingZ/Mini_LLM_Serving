@@ -3,6 +3,7 @@ from .engine import EngineConfig, MiniServingEngine
 from .kv_cache import KVBlockManager
 from .request import Request, RequestStatus
 from .scheduler import Scheduler, SchedulerConfig
+from .service import build_engine, execute_run
 
 __all__ = [
     "BackendTiming",
@@ -16,4 +17,6 @@ __all__ = [
     "Scheduler",
     "SchedulerConfig",
     "ServingBackend",
+    "build_engine",
+    "execute_run",
 ]
