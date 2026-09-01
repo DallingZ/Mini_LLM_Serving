@@ -56,6 +56,26 @@ class Scheduler:
 
         return admitted
 
+    def reject_unservable(self, kv_cache: KVBlockManager, now_ms: float) -> List[Request]:
+        rejected: List[Request] = []
+
+        while self.waiting:
+            request = self.waiting[0]
+            if request.arrival_ms > now_ms:
+                break
+            if (
+                request.prompt_len <= self.config.max_prefill_tokens
+                and kv_cache.blocks_for_tokens(request.prompt_len) <= kv_cache.num_blocks
+            ):
+                break
+
+            self.waiting.popleft()
+            request.fail("request prompt is too large for current serving config", now_ms)
+            self.failed.append(request)
+            rejected.append(request)
+
+        return rejected
+
     def complete(self, request: Request) -> None:
         self.running = [item for item in self.running if item.request_id != request.request_id]
         if request.status == RequestStatus.FAILED:

@@ -22,6 +22,7 @@ class ServiceTest(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual(result["backend"], "dummy")
         self.assertEqual(result["metrics"]["completed"], 2)
+        self.assertEqual(result["metrics"]["failed"], 0)
         self.assertEqual(len(result["requests"]), 2)
         self.assertGreater(len(result["events"]), 0)
 

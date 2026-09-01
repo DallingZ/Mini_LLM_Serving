@@ -39,6 +39,25 @@ class EngineTest(unittest.TestCase):
         self.assertEqual(metrics.output_tokens, 16)
         self.assertEqual(engine.kv_cache.stats().used_blocks, 0)
 
+    def test_engine_rejects_prompt_that_cannot_fit(self) -> None:
+        engine = MiniServingEngine(
+            EngineConfig(
+                max_num_seqs=2,
+                max_prefill_tokens=16,
+                num_kv_blocks=2,
+                block_size=8,
+            )
+        )
+        request = engine.submit(prompt_len=32, max_new_tokens=4)
+
+        metrics = engine.run()
+
+        self.assertEqual(metrics.completed, 0)
+        self.assertEqual(metrics.failed, 1)
+        self.assertEqual(metrics.output_tokens, 0)
+        self.assertEqual(request.error, "request prompt is too large for current serving config")
+        self.assertEqual(engine.kv_cache.stats().used_blocks, 0)
+
 
 if __name__ == "__main__":
     unittest.main()

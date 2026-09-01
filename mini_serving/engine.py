@@ -39,6 +39,10 @@ class RunMetrics:
         return sum(1 for req in self.requests if req.finish_ms is not None and req.error is None)
 
     @property
+    def failed(self) -> int:
+        return sum(1 for req in self.requests if req.error is not None)
+
+    @property
     def throughput_tokens_per_s(self) -> float:
         if self.total_time_ms <= 0:
             return 0.0
@@ -66,6 +70,7 @@ class RunMetrics:
     def as_dict(self) -> Dict[str, float]:
         return {
             "completed": self.completed,
+            "failed": self.failed,
             "total_time_ms": self.total_time_ms,
             "output_tokens": self.output_tokens,
             "throughput_tokens_per_s": self.throughput_tokens_per_s,
@@ -120,6 +125,10 @@ class MiniServingEngine:
         )
 
     def _admit_requests(self) -> None:
+        rejected = self.scheduler.reject_unservable(self.kv_cache, self._now_ms)
+        for request in rejected:
+            self._record_event("reject", 1, request.prompt_len)
+
         admitted = self.scheduler.admit(self.kv_cache, self._now_ms)
         if not admitted:
             return
