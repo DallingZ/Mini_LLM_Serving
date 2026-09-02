@@ -23,6 +23,15 @@ class Scheduler:
         self.failed: List[Request] = []
 
     def add(self, request: Request) -> None:
+        if not self.waiting:
+            self.waiting.append(request)
+            return
+
+        for index, existing in enumerate(self.waiting):
+            if (request.arrival_ms, request.request_id) < (existing.arrival_ms, existing.request_id):
+                self.waiting.insert(index, request)
+                return
+
         self.waiting.append(request)
 
     def active(self) -> Iterable[Request]:
@@ -31,7 +40,7 @@ class Scheduler:
     def next_arrival_ms(self) -> Optional[float]:
         if not self.waiting:
             return None
-        return self.waiting[0].arrival_ms
+        return min(request.arrival_ms for request in self.waiting)
 
     def admit(self, kv_cache: KVBlockManager, now_ms: float) -> List[Request]:
         admitted: List[Request] = []

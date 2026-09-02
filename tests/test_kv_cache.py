@@ -39,6 +39,24 @@ class EngineTest(unittest.TestCase):
         self.assertEqual(metrics.output_tokens, 16)
         self.assertEqual(engine.kv_cache.stats().used_blocks, 0)
 
+    def test_engine_respects_arrival_time_order(self) -> None:
+        engine = MiniServingEngine(
+            EngineConfig(
+                max_num_seqs=1,
+                num_kv_blocks=16,
+                block_size=8,
+            )
+        )
+        late = engine.submit(prompt_len=4, max_new_tokens=1, arrival_ms=5.0)
+        early = engine.submit(prompt_len=4, max_new_tokens=1, arrival_ms=0.0)
+
+        metrics = engine.run()
+
+        self.assertEqual(metrics.completed, 2)
+        self.assertEqual(early.admitted_ms, 0.0)
+        self.assertEqual(late.admitted_ms, 5.0)
+        self.assertLess(early.finish_ms, late.finish_ms)
+
     def test_engine_rejects_prompt_that_cannot_fit(self) -> None:
         engine = MiniServingEngine(
             EngineConfig(
