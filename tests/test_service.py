@@ -26,6 +26,30 @@ class ServiceTest(unittest.TestCase):
         self.assertEqual(len(result["requests"]), 2)
         self.assertGreater(len(result["events"]), 0)
 
+    def test_execute_run_rejects_invalid_backend(self) -> None:
+        result = execute_run(
+            {
+                "backend": {"type": "unknown-backend"},
+                "requests": [{"prompt_len": 8, "max_new_tokens": 2}],
+            }
+        )
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["backend"], "unknown-backend")
+        self.assertEqual(result["error_type"], "invalid_request")
+        self.assertIn("unsupported backend type", result["error"])
+
+    def test_execute_run_marks_qwen_backend_unimplemented(self) -> None:
+        result = execute_run(
+            {
+                "backend": {"type": "qwen"},
+                "requests": [{"prompt_len": 8, "max_new_tokens": 2}],
+            }
+        )
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["backend"], "qwen")
+        self.assertEqual(result["error_type"], "not_implemented")
+        self.assertIn("QwenBackend", result["error"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -32,11 +32,24 @@ class MiniServingHTTPHandler(BaseHTTPRequestHandler):
             self._write_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "not found"})
             return
 
-        payload = self._read_json()
+        try:
+            payload = self._read_json()
+        except json.JSONDecodeError:
+            self._write_json(
+                HTTPStatus.BAD_REQUEST,
+                {"ok": False, "error": "invalid json", "error_type": "invalid_request"},
+            )
+            return
+
         result = execute_run(payload)
-        status = HTTPStatus.OK if result.get("ok") else HTTPStatus.BAD_REQUEST
-        if not result.get("ok") and "not be wired" in str(result.get("error", "")):
+        if result.get("ok"):
+            status = HTTPStatus.OK
+        elif result.get("error_type") == "not_implemented":
             status = HTTPStatus.NOT_IMPLEMENTED
+        elif result.get("error_type") == "invalid_request":
+            status = HTTPStatus.BAD_REQUEST
+        else:
+            status = HTTPStatus.INTERNAL_SERVER_ERROR
         self._write_json(status, result)
 
     def log_message(self, format: str, *args: Any) -> None:  # noqa: A003

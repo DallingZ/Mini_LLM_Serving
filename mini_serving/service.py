@@ -61,6 +61,14 @@ def build_engine(payload: Mapping[str, Any] | None = None) -> MiniServingEngine:
     return MiniServingEngine(config, backend)
 
 
+def _backend_name_from_payload(payload: Mapping[str, Any]) -> str:
+    backend_spec = payload.get("backend", {})
+    getter = getattr(backend_spec, "get", None)
+    if callable(getter):
+        return str(getter("type", "dummy")).lower()
+    return "unknown"
+
+
 def _request_summary(request: Request) -> dict[str, Any]:
     return {
         "request_id": request.request_id,
@@ -78,7 +86,17 @@ def _request_summary(request: Request) -> dict[str, Any]:
 
 def execute_run(payload: Mapping[str, Any] | None = None) -> dict[str, Any]:
     payload = payload or {}
-    engine = build_engine(payload)
+    backend_name = _backend_name_from_payload(payload)
+
+    try:
+        engine = build_engine(payload)
+    except (AttributeError, KeyError, TypeError, ValueError) as exc:
+        return {
+            "ok": False,
+            "backend": backend_name,
+            "error": str(exc),
+            "error_type": "invalid_request",
+        }
 
     for item in payload.get("requests", []):
         engine.submit(
@@ -94,6 +112,7 @@ def execute_run(payload: Mapping[str, Any] | None = None) -> dict[str, Any]:
             "ok": False,
             "backend": engine.backend.name,
             "error": str(exc),
+            "error_type": "not_implemented",
             "config": asdict(engine.config),
         }
 
