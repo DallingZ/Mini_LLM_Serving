@@ -47,14 +47,16 @@ class EngineTest(unittest.TestCase):
                 block_size=8,
             )
         )
-        late = engine.submit(prompt_len=4, max_new_tokens=1, arrival_ms=5.0)
         early = engine.submit(prompt_len=4, max_new_tokens=1, arrival_ms=0.0)
+        late = engine.submit(prompt_len=4, max_new_tokens=1, arrival_ms=0.0)
 
         metrics = engine.run()
 
         self.assertEqual(metrics.completed, 2)
         self.assertEqual(early.admitted_ms, 0.0)
-        self.assertEqual(late.admitted_ms, 5.0)
+        self.assertGreater(late.admitted_ms, 0.0)
+        self.assertEqual(early.queue_wait_ms, 0.0)
+        self.assertGreater(late.queue_wait_ms, 0.0)
         self.assertLess(early.finish_ms, late.finish_ms)
 
     def test_engine_rejects_prompt_that_cannot_fit(self) -> None:

@@ -33,6 +33,18 @@ class Request:
         return self.prompt_len + self.generated_tokens
 
     @property
+    def queue_wait_ms(self) -> float:
+        if self.admitted_ms is None:
+            return 0.0
+        return max(0.0, self.admitted_ms - self.arrival_ms)
+
+    @property
+    def service_time_ms(self) -> float:
+        if self.admitted_ms is None or self.finish_ms is None:
+            return 0.0
+        return max(0.0, self.finish_ms - self.admitted_ms)
+
+    @property
     def finished(self) -> bool:
         return self.generated_tokens >= self.max_new_tokens
 

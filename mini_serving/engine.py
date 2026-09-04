@@ -54,6 +54,16 @@ class RunMetrics:
         return mean(values) if values else 0.0
 
     @property
+    def avg_queue_wait_ms(self) -> float:
+        values = [req.queue_wait_ms for req in self.requests if req.admitted_ms is not None]
+        return mean(values) if values else 0.0
+
+    @property
+    def avg_service_time_ms(self) -> float:
+        values = [req.service_time_ms for req in self.requests if req.finish_ms is not None and req.admitted_ms is not None]
+        return mean(values) if values else 0.0
+
+    @property
     def avg_latency_ms(self) -> float:
         values = [req.finish_ms - req.arrival_ms for req in self.requests if req.finish_ms is not None]
         return mean(values) if values else 0.0
@@ -75,7 +85,9 @@ class RunMetrics:
             "output_tokens": self.output_tokens,
             "throughput_tokens_per_s": self.throughput_tokens_per_s,
             "avg_ttft_ms": self.avg_ttft_ms,
+            "avg_queue_wait_ms": self.avg_queue_wait_ms,
             "avg_tpot_ms": self.avg_tpot_ms,
+            "avg_service_time_ms": self.avg_service_time_ms,
             "avg_latency_ms": self.avg_latency_ms,
             "max_kv_used_blocks": self.max_kv_used_blocks,
         }

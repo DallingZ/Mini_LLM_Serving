@@ -79,6 +79,8 @@ def _request_summary(request: Request) -> dict[str, Any]:
         "generated_tokens": request.generated_tokens,
         "first_token_ms": request.first_token_ms,
         "finish_ms": request.finish_ms,
+        "queue_wait_ms": request.queue_wait_ms,
+        "service_time_ms": request.service_time_ms,
         "error": request.error,
         "block_ids": list(request.block_ids),
     }

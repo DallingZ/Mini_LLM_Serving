@@ -23,6 +23,8 @@ class ServiceTest(unittest.TestCase):
         self.assertEqual(result["backend"], "dummy")
         self.assertEqual(result["metrics"]["completed"], 2)
         self.assertEqual(result["metrics"]["failed"], 0)
+        self.assertIn("avg_queue_wait_ms", result["metrics"])
+        self.assertIn("avg_service_time_ms", result["metrics"])
         self.assertEqual(len(result["requests"]), 2)
         self.assertGreater(len(result["events"]), 0)
 
