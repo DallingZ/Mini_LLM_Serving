@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict
 from typing import Any, Mapping
 
-from .backend import BackendTiming, DummyBackend, QwenBackend, ServingBackend
+from .backend import BackendTiming, DummyBackend, QwenBackend, QwenBackendConfig, ServingBackend
 from .engine import EngineConfig, MiniServingEngine
 from .request import Request
 
@@ -16,6 +16,20 @@ def _int_value(source: Mapping[str, Any], key: str, default: int) -> int:
 def _float_value(source: Mapping[str, Any], key: str, default: float) -> float:
     value = source.get(key, default)
     return float(value)
+
+
+def _bool_value(source: Mapping[str, Any], key: str, default: bool) -> bool:
+    value = source.get(key, default)
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(value)
+
+
+def _str_value(source: Mapping[str, Any], key: str, default: str) -> str:
+    value = source.get(key, default)
+    return str(value)
 
 
 def build_backend(spec: Mapping[str, Any] | None, timing: BackendTiming) -> ServingBackend:
@@ -34,7 +48,21 @@ def build_backend(spec: Mapping[str, Any] | None, timing: BackendTiming) -> Serv
         return DummyBackend(backend_timing)
 
     if backend_type == "qwen":
-        return QwenBackend()
+        backend_spec = dict(spec)
+        nested_spec = spec.get("qwen", {})
+        if isinstance(nested_spec, Mapping):
+            backend_spec.update(nested_spec)
+        return QwenBackend(
+            QwenBackendConfig(
+                enabled=_bool_value(backend_spec, "enabled", False),
+                model_id=_str_value(backend_spec, "model_id", "Qwen/Qwen2.5-0.5B-Instruct"),
+                device=_str_value(backend_spec, "device", "cuda"),
+                dtype=_str_value(backend_spec, "dtype", "auto"),
+                trust_remote_code=_bool_value(backend_spec, "trust_remote_code", True),
+                local_files_only=_bool_value(backend_spec, "local_files_only", False),
+                max_context_tokens=_int_value(backend_spec, "max_context_tokens", 4096),
+            )
+        )
 
     raise ValueError(f"unsupported backend type: {backend_type}")
 
@@ -105,6 +133,7 @@ def execute_run(payload: Mapping[str, Any] | None = None) -> dict[str, Any]:
             prompt_len=_int_value(item, "prompt_len", 1),
             max_new_tokens=_int_value(item, "max_new_tokens", 1),
             arrival_ms=_float_value(item, "arrival_ms", 0.0),
+            prompt_text=item.get("prompt_text"),
         )
 
     try:

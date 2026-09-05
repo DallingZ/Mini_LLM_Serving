@@ -15,6 +15,7 @@ class Request:
     request_id: int
     prompt_len: int
     max_new_tokens: int
+    prompt_text: Optional[str] = None
     arrival_ms: float = 0.0
     output_ids: List[int] = field(default_factory=list)
     block_ids: List[int] = field(default_factory=list)

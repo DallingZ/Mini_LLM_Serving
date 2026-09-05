@@ -109,11 +109,18 @@ class MiniServingEngine:
         self._max_kv_used_blocks = 0
         self._events: List[StepEvent] = []
 
-    def submit(self, prompt_len: int, max_new_tokens: int, arrival_ms: float = 0.0) -> Request:
+    def submit(
+        self,
+        prompt_len: int,
+        max_new_tokens: int,
+        arrival_ms: float = 0.0,
+        prompt_text: str | None = None,
+    ) -> Request:
         request = Request(
             request_id=len(self._requests),
             prompt_len=prompt_len,
             max_new_tokens=max_new_tokens,
+            prompt_text=prompt_text,
             arrival_ms=arrival_ms,
         )
         self._requests.append(request)
@@ -167,7 +174,12 @@ class MiniServingEngine:
                 continue
 
             request.append_token(
-                self.backend.next_token(request.request_id, request.prompt_len, request.generated_tokens),
+                self.backend.next_token(
+                    request.request_id,
+                    request.prompt_len,
+                    request.generated_tokens,
+                    prompt_text=request.prompt_text,
+                ),
                 self._now_ms,
             )
             if request.finished:
