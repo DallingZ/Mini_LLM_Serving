@@ -101,6 +101,7 @@ def _request_summary(request: Request) -> dict[str, Any]:
     return {
         "request_id": request.request_id,
         "prompt_len": request.prompt_len,
+        "prompt_text": request.prompt_text,
         "max_new_tokens": request.max_new_tokens,
         "arrival_ms": request.arrival_ms,
         "status": request.status.value,

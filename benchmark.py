@@ -19,6 +19,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--num-kv-blocks", type=int, default=2048)
     parser.add_argument("--block-size", type=int, default=16)
     parser.add_argument("--repeat", type=int, default=3)
+    parser.add_argument("--prompt-prefix", default="benchmark")
     return parser.parse_args()
 
 
@@ -42,6 +43,7 @@ def run_case(args: argparse.Namespace, name: str, max_num_seqs: int) -> Dict[str
             prompt_len=prompt_len_for(i, args.prompt_len, args.prompt_jitter),
             max_new_tokens=args.max_new_tokens,
             arrival_ms=i * args.arrival_gap_ms,
+            prompt_text=f"{args.prompt_prefix}-{i}",
         )
 
     metrics = engine.run()
