@@ -35,6 +35,7 @@ class ServiceTest(unittest.TestCase):
         self.assertEqual(result["metrics"]["failed"], 0)
         self.assertEqual(len(result["requests"]), 2)
         self.assertGreater(len(result["events"]), 0)
+        self.assertEqual(result["backend_mode"], "simulated")
         self.assertEqual(result["requests"][0]["prompt_text"], "hello serving")
         self.assertEqual(result["requests"][1]["prompt_text"], "batch decode demo")
 
@@ -61,6 +62,7 @@ class ServiceTest(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual(result["backend"], "qwen")
         self.assertEqual(result["metrics"]["completed"], 1)
+        self.assertIn(result["backend_mode"], {"fallback", "model"})
         self.assertEqual(result["requests"][0]["prompt_text"], "qwen path")
 
 

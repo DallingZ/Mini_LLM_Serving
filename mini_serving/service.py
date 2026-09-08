@@ -151,6 +151,7 @@ def execute_run(payload: Mapping[str, Any] | None = None) -> dict[str, Any]:
     return {
         "ok": True,
         "backend": engine.backend.name,
+        "backend_mode": getattr(engine.backend, "runtime_mode", "deterministic"),
         "config": asdict(engine.config),
         "metrics": metrics.as_dict(),
         "requests": [_request_summary(request) for request in metrics.requests],

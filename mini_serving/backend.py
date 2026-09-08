@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Dict, Optional
@@ -28,6 +29,10 @@ class QwenBackendConfig:
 class ServingBackend(ABC):
     name = "backend"
 
+    @property
+    def runtime_mode(self) -> str:
+        return "deterministic"
+
     @abstractmethod
     def prefill_latency_ms(self, prompt_tokens: int, batch_size: int) -> float:
         raise NotImplementedError
@@ -49,6 +54,10 @@ class ServingBackend(ABC):
 
 class DummyBackend(ServingBackend):
     name = "dummy"
+
+    @property
+    def runtime_mode(self) -> str:
+        return "simulated"
 
     def __init__(self, timing: BackendTiming | None = None) -> None:
         self.timing = timing or BackendTiming()
@@ -92,6 +101,13 @@ class QwenBackend(ServingBackend):
         self._tokenizer = None
         self._torch = None
         self._model_load_error: Optional[Exception] = None
+        self._runtime_mode = "fallback"
+
+    @property
+    def runtime_mode(self) -> str:
+        if not self.config.enabled:
+            return "disabled"
+        return self._runtime_mode
 
     def _resolve_dtype(self, torch):
         dtype = self.config.dtype.lower()
@@ -144,11 +160,13 @@ class QwenBackend(ServingBackend):
             model.eval()
         except Exception as exc:  # pragma: no cover - optional runtime path
             self._model_load_error = exc
+            self._runtime_mode = "fallback"
             return False
 
         self._torch = torch
         self._tokenizer = tokenizer
         self._model = model
+        self._runtime_mode = "model"
         return True
 
     def _seed_tokens(self, request_id: int, prompt_len: int, prompt_text: Optional[str]) -> list[int]:
@@ -159,7 +177,11 @@ class QwenBackend(ServingBackend):
 
         vocab_size = 151936
         seed_len = max(1, min(prompt_len, self.config.max_context_tokens))
-        base = request_id * 997 + prompt_len * 17
+        if prompt_text:
+            digest = hashlib.blake2b(prompt_text.encode("utf-8"), digest_size=8).digest()
+            base = int.from_bytes(digest, "little")
+        else:
+            base = request_id * 997 + prompt_len * 17
         return [((base + idx * 31) % vocab_size) for idx in range(seed_len)]
 
     def _ensure_state(
