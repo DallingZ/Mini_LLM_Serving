@@ -63,7 +63,39 @@ class ServiceTest(unittest.TestCase):
         self.assertEqual(result["backend"], "qwen")
         self.assertEqual(result["metrics"]["completed"], 1)
         self.assertIn(result["backend_mode"], {"fallback", "model"})
+        self.assertEqual(result["backend_stats"]["prefill_batches"], 1)
+        self.assertEqual(result["backend_stats"]["decode_batches"], 2)
+        self.assertEqual(result["backend_stats"]["fallback_tokens"], 2)
         self.assertEqual(result["requests"][0]["prompt_text"], "qwen path")
+
+    def test_enabled_qwen_backend_decodes_running_requests_as_batch(self) -> None:
+        result = execute_run(
+            {
+                "config": {
+                    "max_num_seqs": 2,
+                    "max_prefill_tokens": 64,
+                    "num_kv_blocks": 32,
+                    "block_size": 8,
+                },
+                "backend": {
+                    "type": "qwen",
+                    "enabled": True,
+                    "qwen": {
+                        "local_files_only": True,
+                    },
+                },
+                "requests": [
+                    {"prompt_len": 8, "max_new_tokens": 3, "prompt_text": "first"},
+                    {"prompt_len": 8, "max_new_tokens": 3, "prompt_text": "second"},
+                ],
+            }
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["metrics"]["completed"], 2)
+        self.assertEqual(result["backend_stats"]["prefill_batches"], 1)
+        self.assertEqual(result["backend_stats"]["decode_batches"], 3)
+        self.assertEqual(result["backend_stats"]["fallback_tokens"], 6)
 
 
 if __name__ == "__main__":

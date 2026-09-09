@@ -152,6 +152,7 @@ def execute_run(payload: Mapping[str, Any] | None = None) -> dict[str, Any]:
         "ok": True,
         "backend": engine.backend.name,
         "backend_mode": getattr(engine.backend, "runtime_mode", "deterministic"),
+        "backend_stats": dict(getattr(engine.backend, "runtime_stats", {})),
         "config": asdict(engine.config),
         "metrics": metrics.as_dict(),
         "requests": [_request_summary(request) for request in metrics.requests],

@@ -152,6 +152,7 @@ class MiniServingEngine:
         if not admitted:
             return
 
+        self.backend.prefill_batch(admitted)
         tokens = sum(req.prompt_len for req in admitted)
         elapsed = self.backend.prefill_latency_ms(tokens, len(admitted))
         self._now_ms += elapsed
@@ -163,6 +164,7 @@ class MiniServingEngine:
         elapsed = self.backend.decode_latency_ms(len(active), max_context)
         self._now_ms += elapsed
 
+        decodable: List[Request] = []
         for request in active:
             old_tokens = request.cached_tokens
             try:
@@ -170,20 +172,26 @@ class MiniServingEngine:
             except RuntimeError as exc:
                 request.fail(str(exc), self._now_ms)
                 self.kv_cache.free(request.request_id)
+                self.backend.release_request(request.request_id)
+                self.scheduler.complete(request)
+                continue
+            decodable.append(request)
+
+        token_ids = self.backend.decode_batch(decodable)
+
+        for request in decodable:
+            token_id = token_ids.get(request.request_id)
+            if token_id is None:
+                request.fail("backend did not return a token for request", self._now_ms)
+                self.kv_cache.free(request.request_id)
+                self.backend.release_request(request.request_id)
                 self.scheduler.complete(request)
                 continue
 
-            request.append_token(
-                self.backend.next_token(
-                    request.request_id,
-                    request.prompt_len,
-                    request.generated_tokens,
-                    prompt_text=request.prompt_text,
-                ),
-                self._now_ms,
-            )
+            request.append_token(token_id, self._now_ms)
             if request.finished:
                 self.kv_cache.free(request.request_id)
+                self.backend.release_request(request.request_id)
                 self.scheduler.complete(request)
 
         self._record_event("decode", len(active), len(active))

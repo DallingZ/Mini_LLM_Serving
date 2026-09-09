@@ -77,6 +77,7 @@ def run_case(args: argparse.Namespace, name: str, max_num_seqs: int) -> Dict[str
     row["case"] = name
     row["backend"] = engine.backend.name
     row["backend_mode"] = getattr(engine.backend, "runtime_mode", "deterministic")
+    row.update(getattr(engine.backend, "runtime_stats", {}))
     row["max_num_seqs"] = max_num_seqs
     row["kv_usage_percent"] = metrics.max_kv_used_blocks * 100.0 / args.num_kv_blocks
     return row
@@ -96,6 +97,10 @@ def main() -> None:
             "run",
             "backend",
             "backend_mode",
+            "prefill_batches",
+            "decode_batches",
+            "model_forward_calls",
+            "fallback_tokens",
             "max_num_seqs",
             "completed",
             "total_time_ms",
@@ -120,6 +125,10 @@ def main() -> None:
                     run,
                     row["backend"],
                     row["backend_mode"],
+                    row.get("prefill_batches", 0),
+                    row.get("decode_batches", 0),
+                    row.get("model_forward_calls", 0),
+                    row.get("fallback_tokens", 0),
                     row["max_num_seqs"],
                     row["completed"],
                     f"{row['total_time_ms']:.3f}",
