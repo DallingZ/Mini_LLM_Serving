@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Dict, Iterable, Optional, Sequence, TYPE_CHECKING
+from typing import Any, Dict, Iterable, Optional, Sequence, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .request import Request
@@ -37,8 +37,11 @@ class ServingBackend(ABC):
         return "deterministic"
 
     @property
-    def runtime_stats(self) -> Dict[str, int]:
+    def runtime_stats(self) -> Dict[str, Any]:
         return {}
+
+    def decode_tokens(self, token_ids: Sequence[int]) -> str:
+        return " ".join(f"<tok:{token_id}>" for token_id in token_ids)
 
     def prefill_batch(self, requests: Sequence["Request"]) -> None:
         _ = requests
@@ -138,13 +141,18 @@ class QwenBackend(ServingBackend):
         return self._runtime_mode
 
     @property
-    def runtime_stats(self) -> Dict[str, int]:
-        return {
+    def runtime_stats(self) -> Dict[str, Any]:
+        stats: Dict[str, Any] = {
             "prefill_batches": self._prefill_batches,
             "decode_batches": self._decode_batches,
             "model_forward_calls": self._model_forward_calls,
             "fallback_tokens": self._fallback_tokens,
         }
+        if self._model_load_error is not None:
+            stats["fallback_reason"] = (
+                f"{type(self._model_load_error).__name__}: {self._model_load_error}"
+            )
+        return stats
 
     def _resolve_dtype(self, torch):
         dtype = self.config.dtype.lower()
@@ -171,6 +179,7 @@ class QwenBackend(ServingBackend):
             from transformers import AutoModelForCausalLM, AutoTokenizer
         except ImportError as exc:
             self._model_load_error = exc
+            self._runtime_mode = "fallback"
             return False
 
         try:
@@ -321,6 +330,13 @@ class QwenBackend(ServingBackend):
             )
             self._fallback_tokens += 1
         return result
+
+    def decode_tokens(self, token_ids: Sequence[int]) -> str:
+        if not token_ids:
+            return ""
+        if self._tokenizer is None:
+            return super().decode_tokens(token_ids)
+        return self._tokenizer.decode(token_ids, skip_special_tokens=True)
 
     def prefill_latency_ms(self, prompt_tokens: int, batch_size: int) -> float:
         self._require_enabled()

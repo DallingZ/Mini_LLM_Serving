@@ -97,7 +97,7 @@ def _backend_name_from_payload(payload: Mapping[str, Any]) -> str:
     return "unknown"
 
 
-def _request_summary(request: Request) -> dict[str, Any]:
+def _request_summary(request: Request, backend: ServingBackend) -> dict[str, Any]:
     return {
         "request_id": request.request_id,
         "prompt_len": request.prompt_len,
@@ -106,6 +106,8 @@ def _request_summary(request: Request) -> dict[str, Any]:
         "arrival_ms": request.arrival_ms,
         "status": request.status.value,
         "generated_tokens": request.generated_tokens,
+        "generated_token_ids": list(request.output_ids),
+        "generated_text": backend.decode_tokens(request.output_ids),
         "first_token_ms": request.first_token_ms,
         "finish_ms": request.finish_ms,
         "queue_wait_ms": request.queue_wait_ms,
@@ -155,6 +157,6 @@ def execute_run(payload: Mapping[str, Any] | None = None) -> dict[str, Any]:
         "backend_stats": dict(getattr(engine.backend, "runtime_stats", {})),
         "config": asdict(engine.config),
         "metrics": metrics.as_dict(),
-        "requests": [_request_summary(request) for request in metrics.requests],
+        "requests": [_request_summary(request, engine.backend) for request in metrics.requests],
         "events": [asdict(event) for event in metrics.events],
     }
