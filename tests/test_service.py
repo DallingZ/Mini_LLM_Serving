@@ -1,7 +1,8 @@
 import unittest
+from types import SimpleNamespace
 from typing import Dict, Sequence
 
-from mini_serving.backend import ServingBackend
+from mini_serving.backend import QwenBackend, QwenBackendConfig, ServingBackend
 from mini_serving.engine import EngineConfig, MiniServingEngine
 from mini_serving.request import Request
 from mini_serving.service import execute_run
@@ -169,6 +170,82 @@ class BatchedBackendTest(unittest.TestCase):
         self.assertEqual(backend.decode_batches, [[0, 1], [0, 1], [0, 1]])
         self.assertEqual(metrics.requests[0].output_ids, [0, 1, 2])
         self.assertEqual(metrics.requests[1].output_ids, [100, 101, 102])
+
+
+class FakeQwenModelTest(unittest.TestCase):
+    def test_qwen_model_path_reuses_past_key_values(self) -> None:
+        try:
+            import torch
+        except ImportError:
+            self.skipTest("torch is not installed")
+
+        class FakeTokenizer:
+            pad_token_id = 0
+            eos_token_id = 0
+
+        class FakeModel:
+            def __init__(self) -> None:
+                self.calls = []
+                self.config = SimpleNamespace(hidden_size=32, num_hidden_layers=1)
+
+            def __call__(
+                self,
+                input_ids,
+                attention_mask,
+                use_cache,
+                past_key_values=None,
+            ):
+                self.calls.append(
+                    {
+                        "input_shape": tuple(input_ids.shape),
+                        "past_key_values": past_key_values,
+                        "use_cache": use_cache,
+                    }
+                )
+                batch_size, sequence_len = input_ids.shape
+                logits = torch.zeros(batch_size, sequence_len, 32)
+                logits[:, :, 7] = 1
+                past_len = 0
+                if past_key_values is not None:
+                    past_len = past_key_values[0][0].shape[-2]
+                total_len = past_len + sequence_len
+                key = torch.zeros(batch_size, 1, total_len, 4)
+                value = torch.zeros(batch_size, 1, total_len, 4)
+                return SimpleNamespace(
+                    logits=logits,
+                    past_key_values=((key, value),),
+                )
+
+        backend = QwenBackend(
+            QwenBackendConfig(
+                enabled=True,
+                device="cpu",
+                max_context_tokens=32,
+            )
+        )
+        backend._torch = torch
+        backend._tokenizer = FakeTokenizer()
+        backend._model = FakeModel()
+        backend._runtime_mode = "model"
+
+        requests = [
+            Request(0, prompt_len=3, max_new_tokens=3, prompt_text="first"),
+            Request(1, prompt_len=5, max_new_tokens=3, prompt_text="second"),
+        ]
+        backend.prefill_batch(requests)
+        first_tokens = backend.decode_batch(requests)
+        second_tokens = backend.decode_batch(requests)
+
+        self.assertEqual(first_tokens, {0: 7, 1: 7})
+        self.assertEqual(second_tokens, {0: 7, 1: 7})
+        self.assertEqual(len(backend._model.calls), 3)
+        self.assertEqual(backend._model.calls[0]["input_shape"], (2, 5))
+        self.assertIsNone(backend._model.calls[0]["past_key_values"])
+        self.assertEqual(backend._model.calls[1]["input_shape"], (1, 1))
+        self.assertEqual(backend._model.calls[2]["input_shape"], (1, 1))
+        self.assertIsNotNone(backend._model.calls[1]["past_key_values"])
+        self.assertIsNotNone(backend._model.calls[2]["past_key_values"])
+        self.assertEqual(backend.runtime_stats["cache_decode_requests"], 2)
 
 
 if __name__ == "__main__":

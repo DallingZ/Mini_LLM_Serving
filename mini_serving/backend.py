@@ -132,7 +132,12 @@ class QwenBackend(ServingBackend):
         self._prefill_batches = 0
         self._decode_batches = 0
         self._model_forward_calls = 0
+        self._cache_decode_requests = 0
         self._fallback_tokens = 0
+        self._past_key_values: Dict[int, Any] = {}
+        self._next_token_ids: Dict[int, int] = {}
+        self._cache_seq_lengths: Dict[int, int] = {}
+        self._cache_valid_lengths: Dict[int, int] = {}
 
     @property
     def runtime_mode(self) -> str:
@@ -146,6 +151,7 @@ class QwenBackend(ServingBackend):
             "prefill_batches": self._prefill_batches,
             "decode_batches": self._decode_batches,
             "model_forward_calls": self._model_forward_calls,
+            "cache_decode_requests": self._cache_decode_requests,
             "fallback_tokens": self._fallback_tokens,
         }
         if self._model_load_error is not None:
@@ -168,7 +174,9 @@ class QwenBackend(ServingBackend):
 
     def _require_enabled(self) -> None:
         if not self.config.enabled:
-            raise NotImplementedError("QwenBackend will be wired to a real model in a later stage.")
+            raise NotImplementedError(
+                "QwenBackend is disabled; set backend.enabled to true to load the model."
+            )
 
     def _try_load_model(self) -> bool:
         if self._model is not None or self._model_load_error is not None:
@@ -242,27 +250,11 @@ class QwenBackend(ServingBackend):
             self._state[request_id] = state
         return state
 
-    def prefill_batch(self, requests: Sequence["Request"]) -> None:
-        self._require_enabled()
-        self._prefill_batches += 1
-        self._try_load_model()
-        for request in requests:
-            self._ensure_state(request.request_id, request.prompt_len, request.prompt_text)
-
-    def _append_generated_token(self, request_id: int, token_id: int) -> int:
-        state = self._state[request_id]
-        state.append(token_id)
-        if len(state) > self.config.max_context_tokens:
-            del state[: len(state) - self.config.max_context_tokens]
-        return token_id
-
-    def _decode_model_batch(self, requests: Sequence["Request"]) -> Dict[int, int]:
+    def _build_model_batch(
+        self,
+        sequences: Sequence[Sequence[int]],
+    ) -> tuple[Any, Any, int]:
         assert self._torch is not None
-        assert self._model is not None
-        sequences = [
-            self._state[request.request_id][-self.config.max_context_tokens :]
-            for request in requests
-        ]
         max_len = max(len(sequence) for sequence in sequences)
         pad_token_id = getattr(self._tokenizer, "pad_token_id", None)
         if pad_token_id is None:
@@ -283,6 +275,144 @@ class QwenBackend(ServingBackend):
                 device=self.config.device,
             )
             attention_mask[row, max_len - length:] = 1
+        return input_ids, attention_mask, max_len
+
+    @staticmethod
+    def _past_from_outputs(outputs: Any) -> Any:
+        past = getattr(outputs, "past_key_values", None)
+        if past is None and isinstance(outputs, dict):
+            past = outputs.get("past_key_values")
+        return past
+
+    @staticmethod
+    def _split_past_key_values(past: Any, batch_size: int) -> Optional[list[Any]]:
+        if past is None:
+            return None
+        if hasattr(past, "to_legacy_cache"):
+            try:
+                past = past.to_legacy_cache()
+            except Exception:
+                return None
+        if not isinstance(past, (tuple, list)):
+            return None
+
+        per_request: list[list[Any]] = [[] for _ in range(batch_size)]
+        for layer in past:
+            if not isinstance(layer, (tuple, list)) or len(layer) < 2:
+                return None
+            for row in range(batch_size):
+                per_request[row].append(
+                    tuple(value[row : row + 1] for value in layer[:2])
+                )
+        return [tuple(layers) for layers in per_request]
+
+    def _trim_past_key_values(self, past: Any) -> Any:
+        max_context = self.config.max_context_tokens
+        if not isinstance(past, tuple):
+            return past
+        trimmed = []
+        for layer in past:
+            if not isinstance(layer, tuple) or len(layer) < 2:
+                return past
+            key, value = layer[:2]
+            if key.shape[-2] > max_context:
+                key = key[..., -max_context:, :]
+                value = value[..., -max_context:, :]
+            trimmed.append((key, value))
+        return tuple(trimmed)
+
+    def _store_request_cache(
+        self,
+        request_id: int,
+        past: Any,
+        cache_seq_len: int,
+        valid_len: int,
+    ) -> None:
+        if past is None:
+            self._past_key_values.pop(request_id, None)
+            self._cache_seq_lengths.pop(request_id, None)
+            self._cache_valid_lengths.pop(request_id, None)
+            return
+        if hasattr(past, "to_legacy_cache"):
+            try:
+                past = past.to_legacy_cache()
+            except Exception:
+                pass
+        if isinstance(past, (tuple, list)):
+            past = tuple(
+                tuple(layer) if isinstance(layer, list) else layer
+                for layer in past
+            )
+        past = self._trim_past_key_values(past)
+        cache_seq_len = min(cache_seq_len, self.config.max_context_tokens)
+        self._past_key_values[request_id] = past
+        self._cache_seq_lengths[request_id] = cache_seq_len
+        self._cache_valid_lengths[request_id] = min(valid_len, cache_seq_len)
+
+    def _prefill_model_batch(self, requests: Sequence["Request"]) -> None:
+        assert self._torch is not None
+        sequences = [
+            self._state[request.request_id][-self.config.max_context_tokens :]
+            for request in requests
+        ]
+        input_ids, attention_mask, max_len = self._build_model_batch(sequences)
+        with self._torch.inference_mode():
+            outputs = self._model(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                use_cache=True,
+            )
+        self._model_forward_calls += 1
+
+        lengths = attention_mask.sum(dim=-1) - 1
+        row_ids = self._torch.arange(len(requests), device=self.config.device)
+        logits = outputs.logits[row_ids, lengths, :]
+        next_token_ids = self._torch.argmax(logits, dim=-1).tolist()
+
+        split_past = self._split_past_key_values(
+            self._past_from_outputs(outputs),
+            len(requests),
+        )
+        for row, request in enumerate(requests):
+            request_id = request.request_id
+            self._next_token_ids[request_id] = int(next_token_ids[row])
+            valid_len = len(sequences[row])
+            if split_past is not None:
+                self._store_request_cache(
+                    request_id,
+                    split_past[row],
+                    max_len,
+                    valid_len,
+                )
+            else:
+                self._store_request_cache(request_id, None, 0, 0)
+
+    def prefill_batch(self, requests: Sequence["Request"]) -> None:
+        self._require_enabled()
+        if not requests:
+            return
+        self._prefill_batches += 1
+        self._try_load_model()
+        for request in requests:
+            self._ensure_state(request.request_id, request.prompt_len, request.prompt_text)
+        if self._model is not None:
+            self._prefill_model_batch(requests)
+
+    def _append_generated_token(self, request_id: int, token_id: int) -> int:
+        state = self._state[request_id]
+        state.append(token_id)
+        if len(state) > self.config.max_context_tokens:
+            del state[: len(state) - self.config.max_context_tokens]
+        return token_id
+
+    def _decode_model_without_cache(self, requests: Sequence["Request"]) -> Dict[int, int]:
+        assert self._torch is not None
+        assert self._model is not None
+        sequences = [
+            self._state[request.request_id][-self.config.max_context_tokens :]
+            for request in requests
+        ]
+        input_ids, attention_mask, _ = self._build_model_batch(sequences)
 
         with self._torch.inference_mode():
             outputs = self._model(
@@ -301,6 +431,62 @@ class QwenBackend(ServingBackend):
             for request, token_id in zip(requests, token_ids)
         }
 
+    def _decode_model_request(self, request: "Request") -> int:
+        request_id = request.request_id
+        past = self._past_key_values.get(request_id)
+        if past is None:
+            return self._decode_model_without_cache([request])[request_id]
+
+        assert self._torch is not None
+        state = self._state[request_id]
+        cache_seq_len = self._cache_seq_lengths[request_id]
+        valid_len = self._cache_valid_lengths[request_id]
+        input_ids = self._torch.tensor(
+            [[state[-1]]],
+            dtype=self._torch.long,
+            device=self.config.device,
+        )
+        attention_mask = self._torch.zeros(
+            (1, cache_seq_len + 1),
+            dtype=self._torch.long,
+            device=self.config.device,
+        )
+        attention_mask[:, cache_seq_len - valid_len :] = 1
+
+        with self._torch.inference_mode():
+            outputs = self._model(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                past_key_values=past,
+                use_cache=True,
+            )
+        self._model_forward_calls += 1
+        self._cache_decode_requests += 1
+
+        next_token = int(self._torch.argmax(outputs.logits[:, -1, :], dim=-1).item())
+        new_past = self._past_from_outputs(outputs)
+        if new_past is None:
+            self._store_request_cache(request_id, None, 0, 0)
+        else:
+            self._store_request_cache(
+                request_id,
+                new_past,
+                cache_seq_len + 1,
+                valid_len + 1,
+            )
+        return self._append_generated_token(request_id, next_token)
+
+    def _decode_model_cached_batch(self, requests: Sequence["Request"]) -> Dict[int, int]:
+        result: Dict[int, int] = {}
+        for request in requests:
+            request_id = request.request_id
+            pending = self._next_token_ids.pop(request_id, None)
+            if pending is not None:
+                result[request_id] = self._append_generated_token(request_id, pending)
+            else:
+                result[request_id] = self._decode_model_request(request)
+        return result
+
     def decode_batch(self, requests: Sequence["Request"]) -> Dict[int, int]:
         self._require_enabled()
         if not requests:
@@ -309,7 +495,7 @@ class QwenBackend(ServingBackend):
         self._decode_batches += 1
         self._try_load_model()
         if self._model is not None:
-            return self._decode_model_batch(requests)
+            return self._decode_model_cached_batch(requests)
 
         result: Dict[int, int] = {}
         for request in requests:
@@ -375,6 +561,10 @@ class QwenBackend(ServingBackend):
 
     def release_request(self, request_id: int) -> None:
         self._state.pop(request_id, None)
+        self._past_key_values.pop(request_id, None)
+        self._next_token_ids.pop(request_id, None)
+        self._cache_seq_lengths.pop(request_id, None)
+        self._cache_valid_lengths.pop(request_id, None)
 
 
 class _RequestView:
